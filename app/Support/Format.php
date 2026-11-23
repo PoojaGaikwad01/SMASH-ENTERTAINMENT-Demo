@@ -33,6 +33,18 @@ class Format
         };
     }
 
+    /** Indian grouping, paise only when present: ₹1,24,999 · ₹350.50 */
+    public static function money(float|int|string|null $amount): string
+    {
+        $amount = round((float) $amount, 2);
+        $rupees = (string) (int) floor(abs($amount));
+        $paise = (int) round((abs($amount) - floor(abs($amount))) * 100);
+        $rest = substr($rupees, 0, -3);
+        $grouped = ($rest !== '' && $rest !== false ? preg_replace('/\B(?=(\d{2})+(?!\d))/', ',', $rest).',' : '').substr($rupees, -3);
+
+        return ($amount < 0 ? '-' : '').'₹'.$grouped.($paise ? sprintf('.%02d', $paise) : '');
+    }
+
     public static function dayLabel(CarbonInterface $t): string
     {
         return match (true) {

@@ -2,6 +2,8 @@
 
 namespace App\Services\Meta;
 
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -98,6 +100,39 @@ class MetaClient
         $response->throw();
 
         return $response->json('messages.0.id') ?? $response->json('message_id') ?? throw new \RuntimeException('No message id in API response');
+    }
+
+    /**
+     * Send an approved WhatsApp template (works outside the 24h window). $params fill the body {{1}}, {{2}}, …
+     * Retries twice on connection / 5xx errors; throws on any other API error. Returns the wamid.
+     */
+    public function sendTemplate(string $to, string $template, string $lang, array $params = []): string
+    {
+        if ($this->isMock()) {
+            return 'mock.out.'.Str::uuid();
+        }
+
+        $retryable = fn ($e) => $e instanceof ConnectionException || ($e instanceof RequestException && $e->response->serverError());
+        $response = Http::baseUrl('https://graph.facebook.com/'.config('leads.meta.graph_version'))
+            ->withToken(config('leads.whatsapp.access_token'))
+            ->timeout(20)->acceptJson()
+            ->retry(3, 500, $retryable, throw: false)
+            ->post(config('leads.whatsapp.phone_number_id').'/messages', [
+                'messaging_product' => 'whatsapp',
+                'recipient_type' => 'individual',
+                'to' => $to,
+                'type' => 'template',
+                'template' => array_filter([
+                    'name' => $template,
+                    'language' => ['code' => $lang],
+                    'components' => $params ? [['type' => 'body', 'parameters' => array_map(
+                        fn ($p) => ['type' => 'text', 'text' => (string) $p], array_values($params))]] : null,
+                ]),
+            ]);
+
+        $response->throw();
+
+        return $response->json('messages.0.id') ?? throw new \RuntimeException('No message id in API response');
     }
 
     /**

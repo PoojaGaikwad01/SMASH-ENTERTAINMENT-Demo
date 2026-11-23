@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Enums\LeadSource;
 use App\Enums\LeadStatus;
 use App\Models\Lead;
 use App\Services\ReminderService;
@@ -18,8 +19,10 @@ class SendLeadReminders extends Command
     {
         $reminded = 0;
 
-        Lead::where('status', LeadStatus::Assigned)
+        Lead::where('status', LeadStatus::New)
             ->whereNotNull('branch_id')
+            ->whereNull('replied_at')
+            ->whereNotIn('source', [LeadSource::PhoneCall, LeadSource::WalkIn]) // staff already spoke to them
             ->where('assigned_at', '<=', now()->subMinutes(config('leads.reminder_after_minutes')))
             ->whereDoesntHave('reminders', fn ($q) => $q->where('sent_at', '>', now()->subHour()))
             ->chunkById(100, function ($leads) use ($reminders, &$reminded) {

@@ -12,7 +12,7 @@ class BranchController extends Controller
 {
     public function index()
     {
-        $branches = Branch::with('managers:id,name,branch_id,is_active')
+        $branches = Branch::with('staff:id,name,role,branch_id,is_active')
             ->orderBy('name')
             ->paginate(25);
 
@@ -28,13 +28,13 @@ class BranchController extends Controller
     {
         $branch = Branch::create($this->validated($request));
 
-        return redirect()->route('branches.edit', $branch)->with('status', 'Branch created.');
+        return redirect()->route('branches.edit', $branch)->with('status', 'Outlet created.');
     }
 
     public function edit(Branch $branch)
     {
-        $branch->load('managers');
-        $availableManagers = User::where('role', Role::BranchManager)
+        $branch->load('staff');
+        $availableManagers = User::whereIn('role', Role::outletRoleValues())
             ->where(fn ($q) => $q->whereNull('branch_id')->orWhere('branch_id', '!=', $branch->id))
             ->with('branch:id,name')
             ->orderBy('name')
@@ -45,38 +45,39 @@ class BranchController extends Controller
 
     public function update(Request $request, Branch $branch)
     {
-        $branch->update($this->validated($request));
+        $branch->update($this->validated($request, $branch));
 
-        return redirect()->route('branches.index')->with('status', 'Branch updated.');
+        return redirect()->route('branches.index')->with('status', 'Outlet updated.');
     }
 
     public function destroy(Branch $branch)
     {
-        if ($branch->users()->exists() || $branch->leads()->exists()) {
-            return back()->withErrors(['branch' => 'This branch still has managers or leads. Deactivate it instead.']);
+        if ($branch->users()->exists() || $branch->leads()->exists() || $branch->bookings()->exists()) {
+            return back()->withErrors(['branch' => 'This outlet still has staff, enquiries or bookings. Deactivate it instead.']);
         }
 
         $branch->delete();
 
-        return redirect()->route('branches.index')->with('status', 'Branch deleted.');
+        return redirect()->route('branches.index')->with('status', 'Outlet deleted.');
     }
 
-    /** Assign (or move) a Branch Manager to this branch. */
+    /** Assign (or move) an outlet manager / front desk user to this outlet. */
     public function assignManager(Request $request, Branch $branch)
     {
         $data = $request->validate([
-            'user_id' => ['required', Rule::exists('users', 'id')->where('role', Role::BranchManager->value)],
+            'user_id' => ['required', Rule::exists('users', 'id')->whereIn('role', Role::outletRoleValues())],
         ]);
 
         User::whereKey($data['user_id'])->update(['branch_id' => $branch->id]);
 
-        return back()->with('status', 'Manager assigned.');
+        return back()->with('status', 'Staff member assigned.');
     }
 
-    private function validated(Request $request): array
+    private function validated(Request $request, ?Branch $branch = null): array
     {
         return $request->validate([
             'name' => ['required', 'string', 'max:100'],
+            'slug' => ['nullable', 'alpha_dash:ascii', 'max:60', Rule::unique('branches', 'slug')->ignore($branch)],
             'city' => ['required', 'string', 'max:100'],
         ]) + ['is_active' => $request->boolean('is_active')];
     }

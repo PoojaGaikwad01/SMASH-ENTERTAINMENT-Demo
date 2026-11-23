@@ -21,8 +21,8 @@
             <svg class="size-5" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
         </button>
         <a href="{{ route('inbox') }}" class="flex items-center gap-2 font-semibold">
-            <span class="grid size-8 place-items-center rounded-lg bg-orange-600 text-sm font-bold text-white">FM</span>
-            <span class="hidden sm:inline">Funky Monkey <span class="font-normal text-slate-500">Leads</span></span>
+            <span class="grid size-8 place-items-center rounded-lg bg-orange-600 text-sm font-bold text-white">SE</span>
+            <span class="hidden sm:inline">Smash <span class="font-normal text-slate-500">Entertainment</span></span>
         </a>
         @if (config('leads.mode') === 'mock')
             <span class="badge bg-amber-100 text-amber-800">Mock mode</span>

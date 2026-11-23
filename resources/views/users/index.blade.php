@@ -12,7 +12,7 @@
             @endforeach
         </select>
         <select name="branch_id" class="input">
-            <option value="">All branches</option>
+            <option value="">All outlets</option>
             @foreach ($branches as $b)
                 <option value="{{ $b->id }}" @selected(request('branch_id') == $b->id)>{{ $b->name }}</option>
             @endforeach
@@ -23,7 +23,7 @@
     <div class="card overflow-x-auto">
         <table class="table">
             <thead>
-                <tr><th>User</th><th class="hidden sm:table-cell">Phone</th><th>Role / Branch</th><th>Status</th><th></th></tr>
+                <tr><th>User</th><th class="hidden sm:table-cell">Phone</th><th>Role / Outlet</th><th>Status</th><th></th></tr>
             </thead>
             <tbody>
                 @forelse ($users as $user)
@@ -35,7 +35,7 @@
                         <td class="hidden text-slate-600 sm:table-cell">{{ $user->phone ?? '—' }}</td>
                         <td>
                             <div>{{ $user->role->label() }}</div>
-                            <div class="text-xs text-slate-500">{{ $user->branch?->name ?? ($user->isAdmin() ? 'All branches' : 'Unassigned') }}</div>
+                            <div class="text-xs text-slate-500">{{ $user->branch?->name ?? ($user->isAdmin() ? 'All outlets' : 'Unassigned') }}</div>
                         </td>
                         <td>
                             <span @class(['badge', 'bg-emerald-100 text-emerald-700' => $user->is_active, 'bg-slate-100 text-slate-500' => ! $user->is_active])>

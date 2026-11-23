@@ -5,7 +5,7 @@
 FROM php:8.3-apache AS app
 
 COPY --from=mlocati/php-extension-installer:latest /usr/bin/install-php-extensions /usr/local/bin/
-RUN install-php-extensions pdo pdo_pgsql pgsql zip mbstring gd bcmath opcache \
+RUN install-php-extensions pdo pdo_mysql pdo_pgsql pgsql zip mbstring gd bcmath opcache \
  && mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini" \
  && a2enmod rewrite \
  && : > /etc/apache2/ports.conf
@@ -41,9 +41,8 @@ ENV PORT=80 \
     SESSION_DRIVER=cookie \
     SESSION_SECURE_COOKIE=true \
     CACHE_STORE=file \
-    DB_CONNECTION=pgsql \
-    DB_SCHEMA=lms \
-    DB_SSLMODE=require
+    DB_CONNECTION=mysql \
+    LOG_META_PATH=php://stderr
 
 EXPOSE 80
 CMD ["start"]

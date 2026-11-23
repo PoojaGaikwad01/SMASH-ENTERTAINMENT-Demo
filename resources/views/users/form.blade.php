@@ -31,10 +31,10 @@
                         @endforeach
                     </select>
                 </div>
-                <div x-show="role === 'branch_manager'">
-                    <label for="branch_id" class="label">Branch</label>
-                    <select id="branch_id" name="branch_id" class="input" :required="role === 'branch_manager'">
-                        <option value="">Select branch…</option>
+                <div x-show="role !== 'admin'">
+                    <label for="branch_id" class="label">Outlet</label>
+                    <select id="branch_id" name="branch_id" class="input" :required="role !== 'admin'">
+                        <option value="">Select outlet…</option>
                         @foreach ($branches as $b)
                             <option value="{{ $b->id }}" @selected(old('branch_id', $user->branch_id) == $b->id)>{{ $b->name }} ({{ $b->city }}){{ $b->is_active ? '' : ' — inactive' }}</option>
                         @endforeach

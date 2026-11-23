@@ -9,8 +9,8 @@
 <body class="flex min-h-full items-center justify-center bg-slate-50 px-4 py-10 text-slate-800 antialiased">
 <div class="w-full max-w-sm">
     <div class="mb-6 flex flex-col items-center gap-2 text-center">
-        <span class="grid size-12 place-items-center rounded-xl bg-orange-600 text-lg font-bold text-white">FM</span>
-        <h1 class="text-xl font-semibold">Funky Monkey Leads</h1>
+        <span class="grid size-12 place-items-center rounded-xl bg-orange-600 text-lg font-bold text-white">SE</span>
+        <h1 class="text-xl font-semibold">Smash Entertainment</h1>
         <p class="text-sm text-slate-500">Sign in to continue</p>
     </div>
 

@@ -113,6 +113,15 @@ return [
             'processors' => [PsrLogMessageProcessor::class],
         ],
 
+        // Meta webhook audit log: object type + message ids only, never message content.
+        // Local: storage/logs/meta.log. Docker/Render: LOG_META_PATH=php://stderr (set in the Dockerfile).
+        'meta' => [
+            'driver' => 'single',
+            'path' => env('LOG_META_PATH', storage_path('logs/meta.log')),
+            'level' => 'debug',
+            'replace_placeholders' => true,
+        ],
+
         'syslog' => [
             'driver' => 'syslog',
             'level' => env('LOG_LEVEL', 'debug'),

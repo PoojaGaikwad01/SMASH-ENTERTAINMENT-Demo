@@ -17,7 +17,7 @@ use Illuminate\Support\Facades\DB;
  */
 class LeadIngestor
 {
-    private const FILLABLE_BLANKS = ['name', 'phone', 'email', 'city', 'contact_id', 'campaign_name', 'ad_name', 'form_name', 'agency_name'];
+    private const FILLABLE_BLANKS = ['name', 'phone', 'email', 'city', 'contact_id', 'campaign_name', 'ad_name', 'form_name', 'agency_name', 'preferred_date', 'guest_count'];
 
     /** Also true when an agency message was split into leads ("{id}#1", "{id}#2", …). */
     public function alreadyProcessed(string $externalMessageId): bool
@@ -107,8 +107,8 @@ class LeadIngestor
                             $existing->{$key} = $lead[$key];
                         }
                     }
-                    if ($existing->status === LeadStatus::Closed) {
-                        $existing->status = $existing->branch_id ? LeadStatus::Assigned : LeadStatus::New;
+                    if ($existing->status === LeadStatus::Lost) {
+                        $existing->status = LeadStatus::New;
                     }
                     $existing->save();
                     $model = $existing;

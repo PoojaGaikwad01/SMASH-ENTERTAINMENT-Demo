@@ -2,6 +2,7 @@
 
 namespace App\Services\Meta;
 
+use App\Enums\EnquiryType;
 use App\Enums\LeadSource;
 use App\Services\Agency\AgencyParser;
 use App\Services\LeadIngestor;
@@ -28,7 +29,7 @@ class MetaWebhookProcessor
                 'page' => $this->page($entry),
                 'instagram' => $this->messaging($entry, LeadSource::IgDm),
                 'whatsapp_business_account' => $this->whatsapp($entry),
-                default => Log::info('Meta webhook: unhandled object', ['object' => $object]),
+                default => Log::channel('meta')->info('Webhook ignored: unhandled object', ['object' => $object]),
             };
         }
     }
@@ -67,6 +68,10 @@ class MetaWebhookProcessor
             'phone' => $pick('phone_number', 'phone', 'mobile_number', 'mobile', 'whatsapp_number'),
             'email' => $pick('email'),
             'city' => $pick('city', 'location', 'area'),
+            'enquiry_type' => EnquiryType::guess($pick('enquiry_type', 'event_type', 'occasion', 'interested_in'))
+                ?? EnquiryType::guess($formName) ?? EnquiryType::General,
+            'preferred_date' => $this->leadDate($pick('preferred_date', 'event_date', 'date')),
+            'guest_count' => $this->leadCount($pick('number_of_guests', 'guest_count', 'guests', 'no_of_guests', 'number_of_people', 'number_of_kids')),
             'campaign_name' => $data['campaign_name'] ?? null,
             'ad_name' => $data['ad_name'] ?? null,
             'form_name' => $formName,
@@ -156,11 +161,34 @@ class MetaWebhookProcessor
         ], ['contact_id' => $from, 'phone' => '+'.$from, 'name' => $profileName]);
     }
 
+    /** Lead-form date answer -> Y-m-d. Accepts "14/12/2026", "14-12-26", "14 Dec 2026", ISO… Null if unparseable. */
+    private function leadDate(?string $v): ?string
+    {
+        if (blank($v)) {
+            return null;
+        }
+        try {
+            if (preg_match('#^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2}|\d{4})$#', trim($v), $m)) {
+                return Carbon::createFromFormat(strlen($m[3]) === 2 ? 'd/m/y' : 'd/m/Y', "{$m[1]}/{$m[2]}/{$m[3]}")->toDateString();
+            }
+
+            return Carbon::parse($v)->toDateString();
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /** First number in a lead-form answer ("20 kids", "approx 35") -> int. */
+    private function leadCount(?string $v): ?int
+    {
+        return preg_match('/\d+/', (string) $v, $m) ? min((int) $m[0], 65535) : null;
+    }
+
     private function isAgency(string $waId): bool
     {
         $from = Phone::normalize('+'.$waId);
 
-        return $from !== null && collect(config('leads.agency_numbers'))->contains(fn ($n) => Phone::normalize($n) === $from);
+        return $from !== null && config('leads.agency_parsing') && collect(config('leads.agency_numbers'))->contains(fn ($n) => Phone::normalize($n) === $from);
     }
 
     private function time(mixed $ts, bool $ms = false): CarbonInterface

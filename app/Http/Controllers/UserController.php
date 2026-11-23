@@ -30,7 +30,7 @@ class UserController extends Controller
     public function create()
     {
         return view('users.form', [
-            'user' => new User(['role' => Role::BranchManager, 'is_active' => true]),
+            'user' => new User(['role' => Role::FrontDesk, 'is_active' => true]),
             'branches' => $this->branches(),
         ]);
     }
@@ -105,8 +105,8 @@ class UserController extends Controller
             'email' => ['required', 'email', 'max:150', Rule::unique('users')->ignore($user)],
             'phone' => ['nullable', 'string', 'max:20', 'regex:/^\+?[0-9 \-]{10,15}$/'],
             'role' => ['required', Rule::enum(Role::class)],
-            'branch_id' => ['nullable', 'required_if:role,'.Role::BranchManager->value, 'exists:branches,id'],
-        ], ['branch_id.required_if' => 'A Branch Manager must be assigned to a branch.']);
+            'branch_id' => ['nullable', 'required_unless:role,'.Role::Admin->value, 'exists:branches,id'],
+        ], ['branch_id.required_unless' => 'Outlet managers and front desk users must belong to an outlet.']);
 
         if ($data['role'] === Role::Admin->value) {
             $data['branch_id'] = null;

@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Enums\LeadStatus;
 use App\Enums\Role;
 use App\Models\Lead;
 use App\Models\Reminder;
@@ -12,14 +11,14 @@ use Illuminate\Support\Facades\Notification;
 
 class ReminderService
 {
-    /** Remind the active managers of the lead's branch. Only for pending leads (assigned, no reply). Returns recipients count. */
+    /** Remind the active staff of the enquiry's outlet. Only for enquiries awaiting a first reply. Returns recipients count. */
     public function remind(Lead $lead, bool $automatic = false): int
     {
-        if ($lead->status !== LeadStatus::Assigned || ! $lead->branch_id) {
+        if (! $lead->awaitingReply()) {
             return 0;
         }
 
-        $managers = User::where('role', Role::BranchManager)
+        $managers = User::whereIn('role', Role::outletRoleValues())
             ->where('branch_id', $lead->branch_id)
             ->where('is_active', true)
             ->get();

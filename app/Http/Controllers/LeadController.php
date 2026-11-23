@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\ActivityType;
+use App\Enums\EnquiryType;
 use App\Enums\LeadStatus;
 use App\Models\Branch;
 use App\Models\Lead;
@@ -15,9 +17,11 @@ use Illuminate\Validation\Rule;
 
 class LeadController extends Controller
 {
-    /** Admin corrects lead details. Saving a needs-review lead with a valid phone clears the flag. */
+    /** Correct enquiry details (admin or the enquiry's outlet staff). Saving a needs-review lead with a valid phone clears the flag. */
     public function update(Request $request, Lead $lead)
     {
+        Gate::authorize('update', $lead);
+
         $data = $request->validate([
             'name' => ['nullable', 'string', 'max:255'],
             'phone' => ['nullable', 'string', 'max:20', function ($attribute, $value, $fail) {
@@ -28,20 +32,24 @@ class LeadController extends Controller
             'email' => ['nullable', 'email', 'max:255'],
             'city' => ['nullable', 'string', 'max:100'],
             'agency_name' => ['nullable', 'string', 'max:255'],
+            'enquiry_type' => ['sometimes', Rule::enum(EnquiryType::class)],
+            'preferred_date' => ['nullable', 'date'],
+            'guest_count' => ['nullable', 'integer', 'min:1', 'max:2000'],
+            'notes' => ['nullable', 'string', 'max:2000'],
         ]);
 
         $lead->fill($data);
 
         $reviewed = $lead->status === LeadStatus::NeedsReview && $lead->phone;
         if ($reviewed) {
-            $lead->status = $lead->branch_id ? LeadStatus::Assigned : LeadStatus::New;
+            $lead->status = LeadStatus::New;
         }
         $lead->save();
 
         return back()->with('status', match (true) {
             (bool) $reviewed => 'Saved and marked as reviewed.',
             $lead->status === LeadStatus::NeedsReview => 'Saved. Still needs review — add a phone number.',
-            default => 'Lead saved.',
+            default => 'Enquiry saved.',
         });
     }
 
@@ -51,7 +59,7 @@ class LeadController extends Controller
         $branch = $this->activeBranch($request);
 
         if ($lead->status === LeadStatus::NeedsReview) {
-            return back()->withErrors(['branch_id' => 'Review and fix this lead before assigning it.']);
+            return back()->withErrors(['branch_id' => 'Review and fix this enquiry before assigning it.']);
         }
 
         $lead->assignTo($branch, $request->user());
@@ -69,7 +77,7 @@ class LeadController extends Controller
         [$review, $assignable] = $leads->partition(fn (Lead $l) => $l->status === LeadStatus::NeedsReview);
         $assignable->each(fn (Lead $l) => $l->assignTo($branch, $request->user()));
 
-        return back()->with('status', "{$assignable->count()} lead(s) assigned to {$branch->name}."
+        return back()->with('status', "{$assignable->count()} enquiry(s) assigned to {$branch->name}."
             .($review->isNotEmpty() ? " {$review->count()} skipped (need review)." : ''));
     }
 
@@ -104,39 +112,29 @@ class LeadController extends Controller
         return back()->with('status', 'Reply sent.');
     }
 
-    /** Replied outside the app (call / personal WhatsApp) — logged as a note in the thread. */
+    /** Replied outside the app (call / personal WhatsApp) — logged on the timeline. Marking lost: EnquiryPipelineController::status. */
     public function markReplied(Request $request, Lead $lead)
     {
         Gate::authorize('reply', $lead);
 
-        $lead->messages()->create(['direction' => 'out', 'channel' => 'note', 'body' => 'Marked reply sent', 'sent_by_user_id' => $request->user()->id]);
+        $lead->logActivity(ActivityType::Message, 'Replied outside the app (call / personal WhatsApp)');
         $lead->markReplied();
 
-        return back()->with('status', 'Marked as reply sent.');
+        return back()->with('status', 'Marked as contacted.');
     }
 
-    public function close(Request $request, Lead $lead)
-    {
-        Gate::authorize('reply', $lead);
-
-        $lead->messages()->create(['direction' => 'out', 'channel' => 'note', 'body' => 'Closed lead', 'sent_by_user_id' => $request->user()->id]);
-        $lead->update(['status' => LeadStatus::Closed]);
-
-        return back()->with('status', 'Lead closed.');
-    }
-
-    /** Admin: nudge the branch managers about a pending lead (assigned, not replied). */
+    /** Admin: nudge the outlet staff about a new enquiry nobody has responded to yet. */
     public function remind(Lead $lead, ReminderService $reminders)
     {
-        if ($lead->status !== LeadStatus::Assigned) {
-            return back()->withErrors(['lead' => 'Reminders are only for assigned leads that are still waiting for a reply.']);
+        if (! $lead->awaitingReply()) {
+            return back()->withErrors(['lead' => 'Reminders are only for new enquiries at an outlet that are still waiting for a reply.']);
         }
 
         $sent = $reminders->remind($lead);
 
         return $sent
-            ? back()->with('status', "Reminder sent to {$sent} manager(s).")
-            : back()->withErrors(['lead' => 'This branch has no active manager to remind.']);
+            ? back()->with('status', "Reminder sent to {$sent} staff member(s).")
+            : back()->withErrors(['lead' => 'This outlet has no active staff to remind.']);
     }
 
     /** Keep the typed reply after an error only if it's short — cookie sessions are capped at ~4 KB. */
