@@ -23,7 +23,7 @@ class UserFactory extends Factory
             'email' => fake()->unique()->safeEmail(),
             'phone' => '+91'.fake()->numerify('9#########'),
             'password' => static::$password ??= Hash::make('password'),
-            'role' => Role::BranchManager,
+            'role' => Role::OutletManager,
             'branch_id' => Branch::factory(),
             'is_active' => true,
             'remember_token' => Str::random(10),
@@ -33,6 +33,11 @@ class UserFactory extends Factory
     public function admin(): static
     {
         return $this->state(fn () => ['role' => Role::Admin, 'branch_id' => null]);
+    }
+
+    public function frontDesk(): static
+    {
+        return $this->state(fn () => ['role' => Role::FrontDesk]);
     }
 
     public function inactive(): static

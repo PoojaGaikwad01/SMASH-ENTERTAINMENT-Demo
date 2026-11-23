@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Enums\ActivityType;
+use App\Enums\EnquiryType;
 use App\Enums\LeadSource;
 use App\Enums\LeadStatus;
 use App\Models\Concerns\BelongsToBranch;
@@ -14,23 +16,30 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Carbon;
 
 #[Fillable([
     'source', 'external_id', 'contact_id', 'name', 'phone', 'email', 'city',
     'branch_id', 'assigned_by', 'assigned_at', 'replied_at', 'status',
     'campaign_name', 'ad_name', 'form_name', 'agency_name', 'raw_payload', 'last_activity_at',
+    'enquiry_type', 'preferred_date', 'guest_count', 'notes', 'lost_reason', 'next_follow_up_at', 'created_by_user_id',
 ])]
 class Lead extends Model
 {
     use BelongsToBranch, HasFactory;
 
-    protected $attributes = ['status' => 'new'];
+    /** A lead is an enquiry (UI label). */
+    protected $attributes = ['status' => 'new', 'enquiry_type' => 'general'];
 
     protected function casts(): array
     {
         return [
             'source' => LeadSource::class,
             'status' => LeadStatus::class,
+            'enquiry_type' => EnquiryType::class,
+            'preferred_date' => 'date',
+            'guest_count' => 'integer',
+            'next_follow_up_at' => 'datetime',
             'raw_payload' => 'array',
             'assigned_at' => 'datetime',
             'replied_at' => 'datetime',
@@ -69,7 +78,7 @@ class Lead extends Model
         ];
     }
 
-    /** Assign or reassign to a branch; the new branch owes a fresh reply. */
+    /** Assign or reassign to an outlet; the new outlet owes a fresh reply. Status is unchanged. */
     public function assignTo(Branch $branch, User $by): void
     {
         $this->forceFill([
@@ -77,19 +86,67 @@ class Lead extends Model
             'assigned_by' => $by->id,
             'assigned_at' => now(),
             'replied_at' => null,
-            'status' => LeadStatus::Assigned,
         ])->save();
     }
 
-    /** Status → reply_sent; replied_at keeps the FIRST reply since assignment. */
+    /** new → contacted (later stages are kept); replied_at keeps the FIRST reply since assignment. */
     public function markReplied(): void
     {
-        $this->forceFill(['status' => LeadStatus::ReplySent, 'replied_at' => $this->replied_at ?? now()])->save();
+        $this->forceFill([
+            'status' => $this->status === LeadStatus::New ? LeadStatus::Contacted : $this->status,
+            'replied_at' => $this->replied_at ?? now(),
+        ])->save();
+    }
+
+    /** Waiting for the outlet's first response (drives reminders). Phone-call / walk-in enquiries were already spoken to. */
+    public function awaitingReply(): bool
+    {
+        return $this->status === LeadStatus::New && $this->branch_id !== null && $this->replied_at === null
+            && ! $this->source->isStaffEntered();
+    }
+
+    /**
+     * Move the enquiry through the pipeline. Lost needs a reason; lost/completed clear the follow-up;
+     * contacted records the first reply. The status_change activity is logged by the `updated` hook below.
+     */
+    public function changeStatus(LeadStatus $to, ?string $lostReason = null): void
+    {
+        $this->status = $to;
+        $this->lost_reason = $to === LeadStatus::Lost ? $lostReason : null;
+        if (in_array($to, [LeadStatus::Lost, LeadStatus::Completed], true)) {
+            $this->next_follow_up_at = null;
+        }
+        if ($to === LeadStatus::Contacted) {
+            $this->replied_at ??= now();
+        }
+        $this->save();
+    }
+
+    /** Add a timeline entry. $by defaults to the signed-in user (null = system, e.g. webhooks/queue). */
+    public function logActivity(ActivityType $type, ?string $body = null, ?User $by = null): EnquiryActivity
+    {
+        return $this->activities()->create([
+            'type' => $type,
+            'body' => $body,
+            'user_id' => $by?->id ?? auth()->id(),
+            'created_at' => now(),
+        ]);
     }
 
     protected static function booted(): void
     {
         static::creating(fn (Lead $lead) => $lead->last_activity_at ??= $lead->created_at ?? now());
+
+        // Every status change, from anywhere (buttons, replies, review fixes, webhooks reopening), is logged.
+        static::updated(function (Lead $lead) {
+            if (! $lead->wasChanged('status')) {
+                return;
+            }
+            $from = LeadStatus::tryFrom((string) $lead->getRawOriginal('status'));
+            $body = ($from?->label() ?? '—').' → '.$lead->status->label()
+                .($lead->status === LeadStatus::Lost && $lead->lost_reason ? " · Reason: {$lead->lost_reason}" : '');
+            $lead->logActivity(ActivityType::StatusChange, $body);
+        });
     }
 
     // --- Relations ---
@@ -109,9 +166,24 @@ class Lead extends Model
         return $this->belongsTo(User::class, 'assigned_by');
     }
 
+    public function createdBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by_user_id');
+    }
+
     public function reminders(): HasMany
     {
         return $this->hasMany(Reminder::class);
+    }
+
+    public function activities(): HasMany
+    {
+        return $this->hasMany(EnquiryActivity::class)->orderBy('created_at')->orderBy('id');
+    }
+
+    public function bookings(): HasMany
+    {
+        return $this->hasMany(Booking::class)->orderByDesc('event_date')->orderByDesc('start_time');
     }
 
     // --- Attributes ---
@@ -141,10 +213,24 @@ class Lead extends Model
 
     // --- Scopes ---
 
-    /** Inbox filters: q (name/phone), source, status, branch_id ("none" = unassigned). */
+    /** Follow-ups due by the end of today (incl. overdue), for enquiries still being worked on. */
+    public function scopeFollowUpsDue(Builder $query): void
+    {
+        $query->whereNotNull('next_follow_up_at')
+            ->where('next_follow_up_at', '<=', now()->endOfDay())
+            ->whereNotIn('status', [LeadStatus::Lost->value, LeadStatus::Completed->value]);
+    }
+
+    /** Inbox filters: q (name/phone), source, status, enquiry_type, branch_id ("none" = unassigned), from/to (received date, Y-m-d). */
     public function scopeFilter(Builder $query, array $f): void
     {
+        // Blank -> no filter (Carbon::parse(null) would mean "now"); unparseable -> ignored.
+        $date = fn ($v) => is_string($v) && trim($v) !== '' ? rescue(fn () => Carbon::parse($v), null, false) : null;
+
         $query
+            ->when($f['enquiry_type'] ?? null, fn ($q, $v) => $q->where('enquiry_type', $v))
+            ->when($date($f['from'] ?? null), fn ($q, $d) => $q->where('created_at', '>=', $d->startOfDay()))
+            ->when($date($f['to'] ?? null), fn ($q, $d) => $q->where('created_at', '<=', $d->endOfDay()))
             ->when($f['source'] ?? null, fn ($q, $v) => $q->where('source', $v))
             ->when($f['status'] ?? null, fn ($q, $v) => $q->where('status', $v))
             ->when($f['branch_id'] ?? null, fn ($q, $v) => $v === 'none' ? $q->whereNull('branch_id') : $q->where('branch_id', (int) $v))

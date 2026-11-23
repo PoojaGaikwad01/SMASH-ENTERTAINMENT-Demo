@@ -42,8 +42,25 @@ class User extends Authenticatable
         return $this->role === Role::Admin;
     }
 
-    public function isBranchManager(): bool
+    public function isOutletManager(): bool
     {
-        return $this->role === Role::BranchManager;
+        return $this->role === Role::OutletManager;
+    }
+
+    public function isFrontDesk(): bool
+    {
+        return $this->role === Role::FrontDesk;
+    }
+
+    /** Users and outlets: admin only. */
+    public function canManageUsers(): bool
+    {
+        return $this->isAdmin();
+    }
+
+    /** Areas / packages / addons: admin (all outlets) or outlet manager (own outlet). */
+    public function canManageCatalog(): bool
+    {
+        return $this->isAdmin() || ($this->isOutletManager() && $this->branch_id !== null);
     }
 }
