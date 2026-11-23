@@ -38,7 +38,7 @@ class Phase6RemindersReportsTest extends TestCase
 
     private function pending(array $attrs = []): Lead
     {
-        return Lead::factory()->create($attrs + ['branch_id' => $this->branch->id, 'status' => LeadStatus::Assigned, 'assigned_at' => now()->subHours(2)]);
+        return Lead::factory()->create($attrs + ['branch_id' => $this->branch->id, 'status' => LeadStatus::New, 'assigned_at' => now()->subHours(2)]);
     }
 
     /** Throwaway RSA service account (Windows PHP needs an explicit openssl config to generate keys). */
@@ -76,16 +76,16 @@ class Phase6RemindersReportsTest extends TestCase
         $lead = $this->pending(['name' => 'Kavya Iyer']);
 
         $this->actingAs($this->admin)->get("/inbox/{$lead->id}")->assertSee('Send reminder');
-        $this->actingAs($this->admin)->post("/leads/{$lead->id}/remind")->assertSessionHas('status', 'Reminder sent to 1 manager(s).');
+        $this->actingAs($this->admin)->post("/leads/{$lead->id}/remind")->assertSessionHas('status', 'Reminder sent to 1 staff member(s).');
 
         $this->assertSame($this->manager->id, Reminder::sole()->sent_to_user_id);
         $notification = $this->manager->notifications()->sole();
         $this->assertSame([$lead->id, 'Reply pending: Kavya Iyer'], [$notification->data['lead_id'], $notification->data['title']]);
 
-        $replied = $this->pending(['status' => LeadStatus::ReplySent]);
+        $replied = $this->pending(['status' => LeadStatus::Contacted]);
         $this->actingAs($this->admin)->post("/leads/{$replied->id}/remind")->assertSessionHasErrors('lead');
 
-        $orphan = Lead::factory()->create(['branch_id' => Branch::factory()->create()->id, 'status' => LeadStatus::Assigned]);
+        $orphan = Lead::factory()->create(['branch_id' => Branch::factory()->create()->id, 'status' => LeadStatus::New]);
         $this->actingAs($this->admin)->post("/leads/{$orphan->id}/remind")->assertSessionHasErrors('lead');
 
         $this->actingAs($this->manager)->post("/leads/{$lead->id}/remind")->assertForbidden();
@@ -99,7 +99,7 @@ class Phase6RemindersReportsTest extends TestCase
         Reminder::create(['lead_id' => $recent->id, 'sent_to_user_id' => $this->manager->id, 'sent_at' => now()->subMinutes(30)]); // reminded <1h ago
         $stale = $this->pending(['assigned_at' => now()->subHours(5)]);
         Reminder::create(['lead_id' => $stale->id, 'sent_to_user_id' => $this->manager->id, 'sent_at' => now()->subHours(2)]);
-        $this->pending(['status' => LeadStatus::ReplySent]);                                         // already replied
+        $this->pending(['status' => LeadStatus::Contacted]);                                         // already replied
 
         $this->artisan('leads:send-reminders')->expectsOutput('Reminders sent for 2 lead(s).')->assertSuccessful();
         $this->assertSame(1, $due->reminders()->count());
@@ -183,11 +183,11 @@ class Phase6RemindersReportsTest extends TestCase
     private function reportData(): void
     {
         $other = Branch::factory()->create(['name' => 'Pune Camp']);
-        Lead::factory()->create(['source' => LeadSource::FbLeadAd, 'branch_id' => $this->branch->id, 'status' => LeadStatus::ReplySent,
+        Lead::factory()->create(['source' => LeadSource::FbLeadAd, 'branch_id' => $this->branch->id, 'status' => LeadStatus::Contacted,
             'assigned_at' => now()->subHours(3), 'replied_at' => now()->subHours(2)]);                                        // 60m
-        Lead::factory()->create(['source' => LeadSource::WhatsappCustomer, 'branch_id' => $this->branch->id, 'status' => LeadStatus::ReplySent,
+        Lead::factory()->create(['source' => LeadSource::WhatsappCustomer, 'branch_id' => $this->branch->id, 'status' => LeadStatus::Contacted,
             'assigned_at' => now()->subHours(5), 'replied_at' => now()->subHours(5)->addMinutes(30), 'name' => '=HYPERLINK("x")', 'phone' => '9812345603']); // 30m
-        Lead::factory()->create(['source' => LeadSource::WhatsappCustomer, 'branch_id' => $other->id, 'status' => LeadStatus::Assigned, 'assigned_at' => now()->subHour()]);
+        Lead::factory()->create(['source' => LeadSource::WhatsappCustomer, 'branch_id' => $other->id, 'status' => LeadStatus::New, 'assigned_at' => now()->subHour()]);
         Lead::factory()->create(['source' => LeadSource::Messenger]);
         Lead::factory()->create(['source' => LeadSource::Messenger, 'created_at' => now()->subDays(40)]);                 // outside default 30 days
     }
@@ -203,7 +203,7 @@ class Phase6RemindersReportsTest extends TestCase
         $this->assertSame(1, $view->viewData('bySource')['Facebook Lead Ad']['replied']);
         $this->assertEquals(45, $view->viewData('byBranch')['Andheri']['avg_reply']);
         $this->assertSame(1, $view->viewData('byBranch')['Unassigned']['total']);
-        $this->assertSame(2, $view->viewData('byStatus')['Reply sent']);
+        $this->assertSame(2, $view->viewData('byStatus')['Contacted']);
 
         $old = $this->actingAs($this->admin)->get('/reports?from='.now()->subDays(41)->toDateString().'&to='.now()->subDays(39)->toDateString());
         $this->assertSame(1, $old->viewData('totals')['total']);

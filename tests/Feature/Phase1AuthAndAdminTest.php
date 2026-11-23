@@ -102,17 +102,17 @@ class Phase1AuthAndAdminTest extends TestCase
 
         // Branch manager requires a branch.
         $this->actingAs($admin)->post('/users', [
-            'name' => 'No Branch', 'email' => 'nb@example.com', 'role' => 'branch_manager',
+            'name' => 'No Branch', 'email' => 'nb@example.com', 'role' => 'outlet_manager',
             'password' => 'secret123', 'password_confirmation' => 'secret123',
         ])->assertSessionHasErrors('branch_id');
 
         $this->actingAs($admin)->post('/users', [
             'name' => 'Priya', 'email' => 'priya@example.com', 'phone' => '+91 9876543210',
-            'role' => 'branch_manager', 'branch_id' => $branch->id, 'is_active' => '1',
+            'role' => 'outlet_manager', 'branch_id' => $branch->id, 'is_active' => '1',
             'password' => 'secret123', 'password_confirmation' => 'secret123',
         ])->assertRedirect('/users');
         $priya = User::where('email', 'priya@example.com')->firstOrFail();
-        $this->assertSame(Role::BranchManager, $priya->role);
+        $this->assertSame(Role::OutletManager, $priya->role);
         $this->assertSame($branch->id, $priya->branch_id);
 
         // Promoting to admin clears the branch.
@@ -135,7 +135,7 @@ class Phase1AuthAndAdminTest extends TestCase
         $this->actingAs($admin)->patch("/users/{$admin->id}/toggle")->assertSessionHasErrors('user');
         $this->actingAs($admin)->delete("/users/{$admin->id}")->assertSessionHasErrors('user');
         $this->actingAs($admin)->put("/users/{$admin->id}", [
-            'name' => 'Me', 'email' => $admin->email, 'role' => 'branch_manager', 'branch_id' => Branch::factory()->create()->id,
+            'name' => 'Me', 'email' => $admin->email, 'role' => 'outlet_manager', 'branch_id' => Branch::factory()->create()->id,
         ]);
 
         $admin->refresh();
@@ -147,24 +147,53 @@ class Phase1AuthAndAdminTest extends TestCase
     {
         $this->seed();
         $admin = User::where('role', 'admin')->first();
-        $manager = User::where('role', 'branch_manager')->first();
+        $manager = User::where('role', 'outlet_manager')->first();
         $branch = Branch::first();
 
         foreach (['/inbox', '/reports', '/branches', '/branches/create', "/branches/{$branch->id}/edit",
-                  '/users', '/users/create', "/users/{$manager->id}/edit", "/users/{$admin->id}/edit", '/users?q=a&role=branch_manager'] as $url) {
+                  '/users', '/users/create', "/users/{$manager->id}/edit", "/users/{$admin->id}/edit", '/users?q=a&role=outlet_manager'] as $url) {
             $this->actingAs($admin)->get($url)->assertOk();
         }
         $this->actingAs($manager)->get('/inbox')->assertOk()->assertSee($branch->name);
         $this->actingAs($manager)->get('/reports')->assertOk();
     }
 
-    public function test_seeder_creates_admin_three_branches_and_managers(): void
+    public function test_seeder_creates_outlets_catalogue_and_one_user_per_role(): void
     {
         $this->seed();
         $this->seed(); // idempotent
 
-        $this->assertSame(1, User::where('role', 'admin')->count());
-        $this->assertSame(3, Branch::count());
-        Branch::all()->each(fn ($b) => $this->assertSame(1, $b->managers()->count()));
+        foreach (Role::cases() as $role) {
+            $this->assertSame(1, User::where('role', $role)->count(), $role->value);
+        }
+        $this->assertSame(2, Branch::count());
+        Branch::all()->each(function (Branch $b) {
+            $this->assertNotEmpty($b->slug);
+            $this->assertSame([3, 4, 5], [$b->areas()->count(), $b->packages()->count(), $b->addons()->count()]);
+        });
+        $this->assertNull(User::where('role', 'admin')->value('branch_id'));
+        $this->assertTrue(User::whereIn('role', Role::outletRoleValues())->whereNull('branch_id')->doesntExist());
+    }
+
+    public function test_front_desk_is_scoped_to_own_outlet_and_cannot_manage_users_or_outlets(): void
+    {
+        $desk = User::factory()->frontDesk()->create();
+        $other = Branch::factory()->create();
+
+        $this->actingAs($desk)->get('/inbox')->assertOk()->assertSee($desk->branch->name)->assertDontSee('>Users<', false);
+        foreach (['/users', '/users/create', '/branches', "/branches/{$other->id}/edit"] as $url) {
+            $this->actingAs($desk)->get($url)->assertForbidden();
+        }
+        $this->assertFalse($desk->canManageCatalog());
+        $this->assertTrue(User::factory()->create()->canManageCatalog()); // outlet manager
+    }
+
+    public function test_outlet_roles_require_an_outlet(): void
+    {
+        $admin = User::factory()->admin()->create();
+        $this->actingAs($admin)->post('/users', [
+            'name' => 'Desk', 'email' => 'desk@example.com', 'role' => 'front_desk',
+            'password' => 'password123', 'password_confirmation' => 'password123',
+        ])->assertSessionHasErrors('branch_id');
     }
 }

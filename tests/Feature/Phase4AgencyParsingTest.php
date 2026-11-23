@@ -25,7 +25,7 @@ class Phase4AgencyParsingTest extends TestCase
     {
         parent::setUp();
         Storage::fake('local');
-        config(['leads.agency_numbers' => ['919900000001']]);
+        config(['leads.agency_parsing' => true, 'leads.agency_numbers' => ['919900000001']]);
     }
 
     private function process(string $fixture): void
@@ -135,9 +135,13 @@ class Phase4AgencyParsingTest extends TestCase
         $lead->refresh();
         $this->assertSame(['Fixed Name', '+919812345690', 'Pune', 'PartyWala', LeadStatus::New], [$lead->name, $lead->phone, $lead->city, $lead->agency_name, $lead->status]);
 
+        // Outlet staff may edit their own outlet's enquiries, not other outlets'.
         $manager = User::factory()->create();
+        $otherDesk = User::factory()->frontDesk()->create();
         $lead->update(['branch_id' => $manager->branch_id]);
-        $this->actingAs($manager)->patch("/leads/{$lead->id}", ['name' => 'x'])->assertForbidden();
-        $this->actingAs($manager)->get("/inbox/{$lead->id}")->assertOk()->assertDontSee('Edit lead details');
+        $this->actingAs($manager)->get("/inbox/{$lead->id}")->assertOk()->assertSee('Edit enquiry details');
+        $this->actingAs($manager)->patch("/leads/{$lead->id}", ['name' => 'By manager'])->assertSessionHasNoErrors();
+        $this->assertSame('By manager', $lead->fresh()->name);
+        $this->actingAs($otherDesk)->patch("/leads/{$lead->id}", ['name' => 'x'])->assertForbidden();
     }
 }

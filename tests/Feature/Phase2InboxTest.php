@@ -20,9 +20,11 @@ class Phase2InboxTest extends TestCase
         $this->seed();
 
         $this->assertSame(30, Lead::count());
-        $this->assertCount(6, Lead::distinct()->pluck('source'));
-        $this->assertSame(2, Lead::where('status', LeadStatus::NeedsReview)->count());
-        $this->assertGreaterThan(30, Message::count());
+        $this->assertCount(count(LeadSource::options()), Lead::distinct()->pluck('source'));
+        $this->assertSame(0, Lead::where('source', LeadSource::WhatsappAgency)->count()); // agency parsing off
+        $this->assertSame(0, Lead::where('status', LeadStatus::NeedsReview)->count());
+        $this->assertGreaterThan(15, Message::count());
+        $this->assertTrue(Lead::whereIn('source', ['phone_call', 'walk_in', 'walk_in_qr', 'website_form'])->whereNull('branch_id')->doesntExist());
         // Chat leads have messages; lead ads don't.
         $this->assertTrue(Lead::where('source', LeadSource::Messenger)->whereDoesntHave('messages')->doesntExist());
         $this->assertTrue(Lead::where('source', LeadSource::FbLeadAd)->whereHas('messages')->doesntExist());
@@ -34,8 +36,8 @@ class Phase2InboxTest extends TestCase
         $admin = User::factory()->admin()->create();
         $manager = User::factory()->create(['branch_id' => $a->id]);
 
-        $mine = Lead::factory()->create(['name' => 'Mine Lead', 'branch_id' => $a->id, 'status' => LeadStatus::Assigned]);
-        $other = Lead::factory()->create(['name' => 'Other Lead', 'branch_id' => $b->id, 'status' => LeadStatus::Assigned]);
+        $mine = Lead::factory()->create(['name' => 'Mine Lead', 'branch_id' => $a->id, 'status' => LeadStatus::New]);
+        $other = Lead::factory()->create(['name' => 'Other Lead', 'branch_id' => $b->id, 'status' => LeadStatus::New]);
         $unassigned = Lead::factory()->create(['name' => 'Floating Lead']);
 
         $this->actingAs($admin)->get('/inbox')->assertOk()->assertSee(['Mine Lead', 'Other Lead', 'Floating Lead']);
@@ -53,7 +55,7 @@ class Phase2InboxTest extends TestCase
         $admin = User::factory()->admin()->create();
         $branch = Branch::factory()->create();
         Lead::factory()->create(['name' => 'Priya WA', 'phone' => '9876543210']);
-        Lead::factory()->create(['name' => 'Rahul FB', 'source' => LeadSource::FbLeadAd, 'phone' => '9123456780', 'branch_id' => $branch->id, 'status' => LeadStatus::Assigned]);
+        Lead::factory()->create(['name' => 'Rahul FB', 'source' => LeadSource::FbLeadAd, 'phone' => '9123456780', 'branch_id' => $branch->id, 'status' => LeadStatus::New]);
         Lead::factory()->create(['name' => 'Check Review', 'status' => LeadStatus::NeedsReview, 'phone' => null]);
 
         $get = fn ($q) => $this->actingAs($admin)->get('/inbox?'.$q)->assertOk();

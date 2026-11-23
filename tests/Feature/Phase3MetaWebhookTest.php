@@ -25,7 +25,8 @@ class Phase3MetaWebhookTest extends TestCase
     {
         parent::setUp();
         Storage::fake('local');
-        config(['leads.agency_numbers' => ['919900000001'], 'leads.dedupe_days' => 7]);
+        // Legacy agency parsing is off by default for Smash; these fixtures cover it explicitly.
+        config(['leads.agency_parsing' => true, 'leads.agency_numbers' => ['919900000001'], 'leads.dedupe_days' => 7]);
     }
 
     private function fixture(string $name): array
@@ -78,6 +79,15 @@ class Phase3MetaWebhookTest extends TestCase
         $this->postJson('/webhooks/meta', $this->fixture('whatsapp_text'))->assertForbidden();
     }
 
+    public function test_agency_numbers_are_plain_customers_when_agency_parsing_is_off(): void
+    {
+        config(['leads.agency_parsing' => false]);
+        $this->artisan('meta:replay', ['fixtures' => ['whatsapp_agency_text']])->assertSuccessful();
+
+        $this->assertTrue(Lead::where('source', LeadSource::WhatsappAgency)->doesntExist());
+        $this->assertSame(1, Lead::where('source', LeadSource::WhatsappCustomer)->count());
+    }
+
     public function test_replay_command_processes_every_fixture_and_is_idempotent(): void
     {
         $this->artisan('meta:replay')->assertSuccessful();
@@ -119,7 +129,7 @@ class Phase3MetaWebhookTest extends TestCase
 
     public function test_dedupe_attaches_to_recent_lead_with_same_phone_only_within_window(): void
     {
-        $recent = Lead::factory()->create(['source' => LeadSource::FbLeadAd, 'phone' => '9812345603', 'email' => null, 'status' => LeadStatus::Closed]);
+        $recent = Lead::factory()->create(['source' => LeadSource::FbLeadAd, 'phone' => '9812345603', 'email' => null, 'status' => LeadStatus::Lost]);
 
         $this->process('whatsapp_text');
 

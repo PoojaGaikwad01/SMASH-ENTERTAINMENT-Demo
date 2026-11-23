@@ -37,7 +37,7 @@ class Phase5AssignReplyTest extends TestCase
             'contact_id' => $channel === 'whatsapp' ? '919812345603' : 'PSID-1',
             'phone' => '+919812345603',
             'branch_id' => $this->branch->id,
-            'status' => LeadStatus::Assigned,
+            'status' => LeadStatus::New,
         ]);
         Message::create(['lead_id' => $lead->id, 'direction' => 'in', 'channel' => $channel, 'body' => 'Hi', 'created_at' => now()->subHours($hoursAgo)]);
 
@@ -46,13 +46,13 @@ class Phase5AssignReplyTest extends TestCase
 
     public function test_admin_assigns_and_reassigns_a_lead(): void
     {
-        $lead = Lead::factory()->create(['status' => LeadStatus::ReplySent, 'replied_at' => now()]);
+        $lead = Lead::factory()->create(['status' => LeadStatus::Contacted, 'replied_at' => now()]);
         $other = Branch::factory()->create();
 
         $this->actingAs($this->admin)->post("/leads/{$lead->id}/assign", ['branch_id' => $other->id])->assertSessionHasNoErrors();
 
         $lead->refresh();
-        $this->assertSame([$other->id, $this->admin->id, LeadStatus::Assigned, null], [$lead->branch_id, $lead->assigned_by, $lead->status, $lead->replied_at]);
+        $this->assertSame([$other->id, $this->admin->id, LeadStatus::Contacted, null], [$lead->branch_id, $lead->assigned_by, $lead->status, $lead->replied_at]);
         $this->assertTrue($lead->assigned_at->isToday());
 
         $this->actingAs($this->manager)->post("/leads/{$lead->id}/assign", ['branch_id' => $this->branch->id])->assertForbidden();
@@ -76,9 +76,9 @@ class Phase5AssignReplyTest extends TestCase
 
         $this->actingAs($this->admin)
             ->post('/leads/bulk-assign', ['ids' => [...$leads->pluck('id'), $review->id], 'branch_id' => $this->branch->id])
-            ->assertSessionHas('status', "2 lead(s) assigned to {$this->branch->name}. 1 skipped (need review).");
+            ->assertSessionHas('status', "2 enquiry(s) assigned to {$this->branch->name}. 1 skipped (need review).");
 
-        $this->assertSame(2, Lead::where('branch_id', $this->branch->id)->where('status', LeadStatus::Assigned)->count());
+        $this->assertSame(2, Lead::where('branch_id', $this->branch->id)->where('status', LeadStatus::New)->count());
         $this->actingAs($this->manager)->post('/leads/bulk-assign', ['ids' => [$review->id], 'branch_id' => $this->branch->id])->assertForbidden();
     }
 
@@ -87,14 +87,14 @@ class Phase5AssignReplyTest extends TestCase
         Http::fake();
         $lead = $this->chatLead('whatsapp', hoursAgo: 2);
 
-        $this->actingAs($this->manager)->get("/inbox/{$lead->id}")->assertOk()->assertSee('Reply via WhatsApp')->assertSee('Mark reply sent');
-        $this->actingAs($this->manager)->post("/leads/{$lead->id}/reply", ['body' => 'Hello from Funky Monkey!'])->assertSessionHasNoErrors();
+        $this->actingAs($this->manager)->get("/inbox/{$lead->id}")->assertOk()->assertSee('Reply via WhatsApp')->assertSee('Log call');
+        $this->actingAs($this->manager)->post("/leads/{$lead->id}/reply", ['body' => 'Hello from Smash!'])->assertSessionHasNoErrors();
 
         $out = $lead->messages()->where('direction', 'out')->sole();
-        $this->assertSame(['whatsapp', 'Hello from Funky Monkey!', $this->manager->id], [$out->channel, $out->body, $out->sent_by_user_id]);
+        $this->assertSame(['whatsapp', 'Hello from Smash!', $this->manager->id], [$out->channel, $out->body, $out->sent_by_user_id]);
         $this->assertStringStartsWith('mock.out.', $out->external_message_id);
         $lead->refresh();
-        $this->assertSame(LeadStatus::ReplySent, $lead->status);
+        $this->assertSame(LeadStatus::Contacted, $lead->status);
         $this->assertNotNull($lead->replied_at);
         Http::assertNothingSent();
     }
@@ -106,12 +106,12 @@ class Phase5AssignReplyTest extends TestCase
         $this->actingAs($this->manager)->get("/inbox/{$lead->id}")->assertOk()->assertSee('24h window closed');
         $this->actingAs($this->manager)->post("/leads/{$lead->id}/reply", ['body' => 'Hi'])->assertSessionHasErrors('body');
         $this->assertSame(0, $lead->messages()->where('direction', 'out')->count());
-        $this->assertSame(LeadStatus::Assigned, $lead->fresh()->status);
+        $this->assertSame(LeadStatus::New, $lead->fresh()->status);
     }
 
     public function test_agency_and_lead_ad_messages_never_open_the_window(): void
     {
-        $lead = Lead::factory()->create(['source' => LeadSource::WhatsappAgency, 'branch_id' => $this->branch->id, 'status' => LeadStatus::Assigned, 'phone' => '9812345604']);
+        $lead = Lead::factory()->create(['source' => LeadSource::WhatsappAgency, 'branch_id' => $this->branch->id, 'status' => LeadStatus::New, 'phone' => '9812345604']);
         Message::create(['lead_id' => $lead->id, 'direction' => 'in', 'channel' => 'agency', 'body' => 'Name: X']);
         Message::create(['lead_id' => $lead->id, 'direction' => 'in', 'channel' => 'lead_ad', 'body' => 'Form']);
 
@@ -121,26 +121,27 @@ class Phase5AssignReplyTest extends TestCase
 
     public function test_lead_ad_shows_call_whatsapp_and_mark_reply_sent(): void
     {
-        $lead = Lead::factory()->create(['source' => LeadSource::FbLeadAd, 'name' => 'Neha Kulkarni', 'phone' => '9812345601', 'branch_id' => $this->branch->id, 'status' => LeadStatus::Assigned]);
+        $lead = Lead::factory()->create(['source' => LeadSource::FbLeadAd, 'name' => 'Neha Kulkarni', 'phone' => '9812345601', 'branch_id' => $this->branch->id, 'status' => LeadStatus::New]);
 
         $this->actingAs($this->manager)->get("/inbox/{$lead->id}")->assertOk()
             ->assertSee('href="tel:+919812345601"', false)
             ->assertSee('https://wa.me/919812345601?text=Hi%20Neha', false)
-            ->assertSee('Mark reply sent')
-            ->assertDontSee('name="body"', false); // no composer for lead ads
+            ->assertSee('Log call')
+            ->assertDontSee(route('leads.reply', $lead)); // no chat composer for lead ads
 
         $this->actingAs($this->manager)->post("/leads/{$lead->id}/mark-replied")->assertSessionHasNoErrors();
         $lead->refresh();
-        $this->assertSame(LeadStatus::ReplySent, $lead->status);
-        $this->assertSame('note', $lead->messages->sole()->channel);
+        $this->assertSame(LeadStatus::Contacted, $lead->status);
+        $this->assertSame(0, $lead->messages()->count()); // logged on the timeline, not as a chat message
+        $this->assertSame(['message', 'status_change'], $lead->activities->pluck('type')->map->value->sort()->values()->all());
 
         $firstReply = $lead->replied_at;
         $this->travel(10)->minutes();
         $this->actingAs($this->manager)->post("/leads/{$lead->id}/mark-replied");
         $this->assertEquals($firstReply, $lead->fresh()->replied_at); // keeps the first reply time
 
-        $this->actingAs($this->manager)->post("/leads/{$lead->id}/close");
-        $this->assertSame(LeadStatus::Closed, $lead->fresh()->status);
+        $this->actingAs($this->manager)->post("/leads/{$lead->id}/status", ['status' => 'lost', 'lost_reason' => 'Chose another venue']);
+        $this->assertSame(LeadStatus::Lost, $lead->fresh()->status);
     }
 
     public function test_reply_permissions(): void
@@ -152,7 +153,7 @@ class Phase5AssignReplyTest extends TestCase
         $this->actingAs($otherManager)->post("/leads/{$lead->id}/reply", ['body' => 'Hi'])->assertForbidden();
         $this->actingAs($otherManager)->post("/leads/{$lead->id}/mark-replied")->assertForbidden();
         $this->actingAs($this->admin)->post("/leads/{$unassigned->id}/mark-replied")->assertForbidden();
-        $this->actingAs($this->admin)->get("/inbox/{$unassigned->id}")->assertSee('Assign this lead to a branch');
+        $this->actingAs($this->admin)->get("/inbox/{$unassigned->id}")->assertSee('Assign this enquiry to an outlet');
     }
 
     public function test_live_mode_sends_via_whatsapp_and_messenger_apis(): void
@@ -185,6 +186,6 @@ class Phase5AssignReplyTest extends TestCase
         $this->actingAs($this->manager)->post("/leads/{$lead->id}/reply", ['body' => 'Hi'])->assertSessionHasErrors('body');
 
         $this->assertSame(0, $lead->messages()->where('direction', 'out')->count());
-        $this->assertSame(LeadStatus::Assigned, $lead->fresh()->status);
+        $this->assertSame(LeadStatus::New, $lead->fresh()->status);
     }
 }
